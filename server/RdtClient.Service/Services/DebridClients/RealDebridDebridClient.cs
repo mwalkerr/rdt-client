@@ -65,6 +65,10 @@ public class RealDebridDebridClient(ILogger<RealDebridDebridClient> logger, IHtt
         {
             throw new RateLimitException(ex.Message, TimeSpan.FromMinutes(2));
         }
+        catch (Exception ex) when (IsPermanentError(ex.Message))
+        {
+            throw new PermanentProviderException(ex.Message);
+        }
     }
 
     public async Task<String> AddTorrentFile(Byte[] bytes)
@@ -81,6 +85,10 @@ public class RealDebridDebridClient(ILogger<RealDebridDebridClient> logger, IHtt
                                    ex.Message.Contains("rate limit exceeded", StringComparison.OrdinalIgnoreCase))
         {
             throw new RateLimitException(ex.Message, TimeSpan.FromMinutes(2));
+        }
+        catch (Exception ex) when (IsPermanentError(ex.Message))
+        {
+            throw new PermanentProviderException(ex.Message);
         }
     }
 
@@ -405,6 +413,22 @@ public class RealDebridDebridClient(ILogger<RealDebridDebridClient> logger, IHtt
         var result = await GetClient().Torrents.GetInfoAsync(torrentId);
 
         return Map(result);
+    }
+
+    private static readonly String[] PermanentErrorPatterns =
+    [
+        "infringing",
+        "virus",
+        "dead",
+        "not allowed",
+        "file unavailable",
+        "account locked",
+        "permission denied",
+    ];
+
+    private static Boolean IsPermanentError(String message)
+    {
+        return PermanentErrorPatterns.Any(pattern => message.Contains(pattern, StringComparison.OrdinalIgnoreCase));
     }
 
     private void Log(String message, Data.Models.Data.Torrent? torrent = null)

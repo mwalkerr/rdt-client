@@ -403,6 +403,15 @@ public class TorrentRunner(
 
                         break;
                     }
+                    catch (PermanentProviderException ex)
+                    {
+                        logger.LogWarning("Permanent provider rejection for torrent {hash}: {message}. " +
+                                          "Removing from client so *arr can search for alternatives.",
+                                          torrent.Hash, ex.Message);
+
+                        await torrents.UpdateComplete(torrent.TorrentId, $"Permanent provider error: {ex.Message}", DateTimeOffset.Now, true);
+                        await torrents.Delete(torrent.TorrentId, true, true, true);
+                    }
                     catch (Exception ex)
                     {
                         await torrents.UpdateComplete(torrent.TorrentId, $"Could not add to provider: {ex.Message}", DateTimeOffset.Now, true);
