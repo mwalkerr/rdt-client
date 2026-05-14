@@ -63,6 +63,12 @@ public class ProviderUpdater(ILogger<ProviderUpdater> logger, IServiceProvider s
                 await torrentRunner.SetRateLimit(ex.RetryAfter, ex.Message);
                 _nextUpdate = DateTime.UtcNow.Add(ex.RetryAfter);
             }
+            catch (Exception ex) when (UnwrapRateLimitException(ex) is { } rle)
+            {
+                logger.LogWarning("Rate limit detected (wrapped in {exType}): {message}", ex.GetType().Name, rle.Message);
+                await torrentRunner.SetRateLimit(rle.RetryAfter, rle.Message);
+                _nextUpdate = DateTime.UtcNow.Add(rle.RetryAfter);
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Unexpected error occurred in ProviderUpdater: {ex.Message}", ex.Message);
@@ -72,5 +78,26 @@ public class ProviderUpdater(ILogger<ProviderUpdater> logger, IServiceProvider s
         }
 
         logger.LogInformation("ProviderUpdater stopped.");
+    }
+
+    private static RateLimitException? UnwrapRateLimitException(Exception ex)
+    {
+        if (ex is AggregateException ae)
+        {
+            foreach (var inner in ae.Flatten().InnerExceptions)
+            {
+                if (inner is RateLimitException rle)
+                {
+                    return rle;
+                }
+            }
+        }
+
+        if (ex.InnerException is RateLimitException innerRle)
+        {
+            return innerRle;
+        }
+
+        return null;
     }
 }
