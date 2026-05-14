@@ -291,6 +291,21 @@ public class DownloadData(DataContext dataContext, ILogger<DownloadData>? logger
         await dataContext.SaveChangesAsync();
     }
 
+    public async Task UpdateDownloadQueued(Guid downloadId, DateTimeOffset? dateTime)
+    {
+        var dbDownload = await dataContext.Downloads
+                                          .FirstOrDefaultAsync(m => m.DownloadId == downloadId);
+
+        if (dbDownload == null)
+        {
+            return;
+        }
+
+        dbDownload.DownloadQueued = dateTime;
+
+        await dataContext.SaveChangesAsync();
+    }
+
     public async Task Reset(Guid downloadId, DateTimeOffset? downloadQueued = null)
     {
         var dbDownload = await dataContext.Downloads
