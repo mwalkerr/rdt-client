@@ -1,5 +1,6 @@
 ﻿using System.IO.Abstractions;
 using System.Net;
+using System.Net.Http;
 using System.Reflection;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection;
@@ -78,15 +79,27 @@ public static class DiConfig
         services.AddTransient<RateLimitHandler>();
 
         services.AddHttpClient(RD_CLIENT)
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+                {
+                    PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+                })
                 .AddHttpMessageHandler<RateLimitHandler>()
                 .AddResilienceHandler("rd_client_handler", ConfigureResiliencePipeline);
 
         // This likely works for most providers, but should be verified and then the providers changed
         // to this HTTP client for added resilience.
         services.AddHttpClient(TORBOX_CLIENT)
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+                {
+                    PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+                })
                 .AddResilienceHandler("torbox_client_handler", ConfigureResiliencePipeline);
 
         services.AddHttpClient(TORBOX_CLIENT_SLOW)
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+                {
+                    PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+                })
                 .AddHttpMessageHandler<RateLimitHandler>()
                 .AddResilienceHandler("torbox_client_handler_slow", ConfigureResiliencePipeline);
     }
