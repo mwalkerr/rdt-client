@@ -216,14 +216,25 @@ public class TorrentRunner(
 
                     if (download.RetryCount < download.Torrent.DownloadRetryAttempts)
                     {
-                        Log($"Retrying download", download, download.Torrent);
+                        var backoffSeconds = (Int32)Math.Pow(2, download.RetryCount) * 30;
+                        Log($"Retrying download in {backoffSeconds}s (attempt {download.RetryCount + 1}/{download.Torrent.DownloadRetryAttempts})", download, download.Torrent);
 
                         await downloads.Reset(downloadId);
                         await downloads.UpdateRetryCount(downloadId, download.RetryCount + 1);
+                        await downloads.UpdateDownloadQueued(downloadId, DateTimeOffset.UtcNow.AddSeconds(backoffSeconds));
+                    }
+                    else if (download.Torrent.RetryCount < download.Torrent.TorrentRetryAttempts)
+                    {
+                        var torrentBackoff = (Int32)Math.Pow(2, download.Torrent.RetryCount) * 60;
+                        Log($"Download retries exhausted, scheduling torrent retry in {torrentBackoff}s (attempt {download.Torrent.RetryCount + 1}/{download.Torrent.TorrentRetryAttempts})", download, download.Torrent);
+
+                        await downloads.UpdateError(downloadId, downloadClient.Error);
+                        await downloads.UpdateCompleted(downloadId, DateTimeOffset.UtcNow);
+                        await torrents.UpdateRetry(download.Torrent.TorrentId, DateTimeOffset.UtcNow.AddSeconds(torrentBackoff), download.Torrent.RetryCount);
                     }
                     else
                     {
-                        Log($"Not retrying download", download, download.Torrent);
+                        Log($"All download and torrent retries exhausted", download, download.Torrent);
 
                         await downloads.UpdateError(downloadId, downloadClient.Error);
                         await downloads.UpdateCompleted(downloadId, DateTimeOffset.UtcNow);
@@ -311,7 +322,7 @@ public class TorrentRunner(
         }
 
         // Process torrent retries
-        foreach (var torrent in allTorrents.Where(m => m.Retry != null))
+        foreach (var torrent in allTorrents.Where(m => m.Retry != null && m.Retry <= DateTimeOffset.UtcNow))
         {
             try
             {
@@ -486,7 +497,7 @@ public class TorrentRunner(
             {
                 // Check if there are any downloads that are queued and can be started.
                 var queuedDownloads = torrent.Downloads
-                                             .Where(m => m.Completed == null && m.DownloadQueued != null && m.DownloadStarted == null && m.Error == null)
+                                             .Where(m => m.Completed == null && m.DownloadQueued != null && m.DownloadQueued <= DateTimeOffset.UtcNow && m.DownloadStarted == null && m.Error == null)
                                              .OrderBy(m => m.DownloadQueued)
                                              .ToList();
 

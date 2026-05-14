@@ -76,6 +76,11 @@ public class Downloads(DownloadData downloadData) : IDownloads
         await downloadData.UpdateRetryCount(downloadId, retryCount);
     }
 
+    public async Task UpdateDownloadQueued(Guid downloadId, DateTimeOffset? dateTime)
+    {
+        await downloadData.UpdateDownloadQueued(downloadId, dateTime);
+    }
+
     public async Task UpdateRemoteId(Guid downloadId, String remoteId)
     {
         await downloadData.UpdateRemoteId(downloadId, remoteId);
