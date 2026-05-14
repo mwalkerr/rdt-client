@@ -1,0 +1,38 @@
+name: Build Fork Image
+
+on:
+  push:
+    branches:
+      - fix/permanent-errors-and-rate-limit
+      - main
+
+permissions:
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/rdtclient
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:patched
+            ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
