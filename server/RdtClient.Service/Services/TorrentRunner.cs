@@ -548,10 +548,23 @@ public class TorrentRunner(
                     {
                         logger.LogError(ex, "Cannot unrestrict link: {ex.Message}", ex.Message);
 
-                        await downloads.UpdateError(download.DownloadId, ex.Message);
-                        await downloads.UpdateCompleted(download.DownloadId, DateTimeOffset.UtcNow);
-                        download.Error = ex.Message;
-                        download.Completed = DateTimeOffset.UtcNow;
+                        if (download.RetryCount < torrent.DownloadRetryAttempts)
+                        {
+                            var backoffSeconds = (Int32)Math.Pow(2, download.RetryCount) * 30;
+                            Log($"Unrestrict failed, retrying download in {backoffSeconds}s (attempt {download.RetryCount + 1}/{torrent.DownloadRetryAttempts})", download, torrent);
+
+                            await downloads.UpdateRetryCount(download.DownloadId, download.RetryCount + 1);
+                            await downloads.UpdateDownloadQueued(download.DownloadId, DateTimeOffset.UtcNow.AddSeconds(backoffSeconds));
+                        }
+                        else
+                        {
+                            LogError($"Unrestrict failed and download retries exhausted", download, torrent);
+
+                            await downloads.UpdateError(download.DownloadId, ex.Message);
+                            await downloads.UpdateCompleted(download.DownloadId, DateTimeOffset.UtcNow);
+                            download.Error = ex.Message;
+                            download.Completed = DateTimeOffset.UtcNow;
+                        }
 
                         return;
                     }
