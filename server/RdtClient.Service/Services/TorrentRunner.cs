@@ -210,35 +210,50 @@ public class TorrentRunner(
                     // Retry the download if an error is encountered.
                     LogError($"Download reported an error: {downloadClient.Error}", download, download.Torrent);
 
-                    Log($"Download retry count {download.RetryCount}/{download.Torrent!.DownloadRetryAttempts}, torrent retry count {download.Torrent.RetryCount}/{download.Torrent.TorrentRetryAttempts}",
-                        download,
-                        download.Torrent);
+                    var errorCategory = DownloadErrorClassifier.Classify(downloadClient.Error);
 
-                    if (download.RetryCount < download.Torrent.DownloadRetryAttempts)
+                    if (errorCategory == DownloadErrorCategory.Infrastructure)
                     {
-                        var backoffSeconds = (Int32)Math.Pow(2, download.RetryCount) * 30;
-                        Log($"Retrying download in {backoffSeconds}s (attempt {download.RetryCount + 1}/{download.Torrent.DownloadRetryAttempts})", download, download.Torrent);
+                        // Infrastructure errors (permissions, disk full, I/O) mean the release is fine
+                        // but the local environment is broken. Don't count retries, don't fail the
+                        // torrent — just reschedule on a long interval until an admin fixes it.
+                        Log($"Infrastructure error, rescheduling in 300s (retries not counted): {downloadClient.Error}", download, download.Torrent);
 
                         await downloads.Reset(downloadId);
-                        await downloads.UpdateRetryCount(downloadId, download.RetryCount + 1);
-                        await downloads.UpdateDownloadQueued(downloadId, DateTimeOffset.UtcNow.AddSeconds(backoffSeconds));
-                    }
-                    else if (download.Torrent.RetryCount < download.Torrent.TorrentRetryAttempts)
-                    {
-                        var torrentBackoff = (Int32)Math.Pow(2, download.Torrent.RetryCount) * 60;
-                        Log($"Download retries exhausted, scheduling torrent retry in {torrentBackoff}s (attempt {download.Torrent.RetryCount + 1}/{download.Torrent.TorrentRetryAttempts})", download, download.Torrent);
-
-                        await downloads.UpdateError(downloadId, downloadClient.Error);
-                        await downloads.UpdateCompleted(downloadId, DateTimeOffset.UtcNow);
-                        await torrents.UpdateRetry(download.Torrent.TorrentId, DateTimeOffset.UtcNow.AddSeconds(torrentBackoff), download.Torrent.RetryCount + 1);
+                        await downloads.UpdateDownloadQueued(downloadId, DateTimeOffset.UtcNow.AddSeconds(300));
                     }
                     else
                     {
-                        Log($"All download and torrent retries exhausted", download, download.Torrent);
+                        Log($"Download retry count {download.RetryCount}/{download.Torrent!.DownloadRetryAttempts}, torrent retry count {download.Torrent.RetryCount}/{download.Torrent.TorrentRetryAttempts}",
+                            download,
+                            download.Torrent);
 
-                        await downloads.UpdateError(downloadId, downloadClient.Error);
-                        await downloads.UpdateCompleted(downloadId, DateTimeOffset.UtcNow);
-                        await torrents.UpdateComplete(download.Torrent.TorrentId, downloadClient.Error, DateTimeOffset.UtcNow, false);
+                        if (download.RetryCount < download.Torrent.DownloadRetryAttempts)
+                        {
+                            var backoffSeconds = (Int32)Math.Pow(2, download.RetryCount) * 30;
+                            Log($"Retrying download in {backoffSeconds}s (attempt {download.RetryCount + 1}/{download.Torrent.DownloadRetryAttempts})", download, download.Torrent);
+
+                            await downloads.Reset(downloadId);
+                            await downloads.UpdateRetryCount(downloadId, download.RetryCount + 1);
+                            await downloads.UpdateDownloadQueued(downloadId, DateTimeOffset.UtcNow.AddSeconds(backoffSeconds));
+                        }
+                        else if (download.Torrent.RetryCount < download.Torrent.TorrentRetryAttempts)
+                        {
+                            var torrentBackoff = (Int32)Math.Pow(2, download.Torrent.RetryCount) * 60;
+                            Log($"Download retries exhausted, scheduling torrent retry in {torrentBackoff}s (attempt {download.Torrent.RetryCount + 1}/{download.Torrent.TorrentRetryAttempts})", download, download.Torrent);
+
+                            await downloads.UpdateError(downloadId, downloadClient.Error);
+                            await downloads.UpdateCompleted(downloadId, DateTimeOffset.UtcNow);
+                            await torrents.UpdateRetry(download.Torrent.TorrentId, DateTimeOffset.UtcNow.AddSeconds(torrentBackoff), download.Torrent.RetryCount + 1);
+                        }
+                        else
+                        {
+                            Log($"All download and torrent retries exhausted", download, download.Torrent);
+
+                            await downloads.UpdateError(downloadId, downloadClient.Error);
+                            await downloads.UpdateCompleted(downloadId, DateTimeOffset.UtcNow);
+                            await torrents.UpdateComplete(download.Torrent.TorrentId, downloadClient.Error, DateTimeOffset.UtcNow, false);
+                        }
                     }
                 }
                 else
