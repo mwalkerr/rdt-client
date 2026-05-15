@@ -230,7 +230,7 @@ public class TorrentRunner(
 
                         await downloads.UpdateError(downloadId, downloadClient.Error);
                         await downloads.UpdateCompleted(downloadId, DateTimeOffset.UtcNow);
-                        await torrents.UpdateRetry(download.Torrent.TorrentId, DateTimeOffset.UtcNow.AddSeconds(torrentBackoff), download.Torrent.RetryCount);
+                        await torrents.UpdateRetry(download.Torrent.TorrentId, DateTimeOffset.UtcNow.AddSeconds(torrentBackoff), download.Torrent.RetryCount + 1);
                     }
                     else
                     {
@@ -238,6 +238,7 @@ public class TorrentRunner(
 
                         await downloads.UpdateError(downloadId, downloadClient.Error);
                         await downloads.UpdateCompleted(downloadId, DateTimeOffset.UtcNow);
+                        await torrents.UpdateComplete(download.Torrent.TorrentId, downloadClient.Error, DateTimeOffset.UtcNow, false);
                     }
                 }
                 else
