@@ -5,6 +5,7 @@ using System.Reflection;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection;
 using Polly;
+using Polly.CircuitBreaker;
 using Polly.Timeout;
 using RateLimitHeaders.Polly;
 using RdtClient.Service.BackgroundServices;
@@ -64,6 +65,7 @@ public static class DiConfig
         services.AddHostedService<UpdateChecker>();
         services.AddHostedService<WatchFolderChecker>();
         services.AddHostedService<WebsocketsUpdater>();
+        services.AddHostedService<WorkerHeartbeatMonitor>();
     }
 
     public static void RegisterHttpClients(this IServiceCollection services)
@@ -143,6 +145,26 @@ public static class DiConfig
 
                 return new((TimeSpan?)null);
             }
+        });
+
+        // Defense in depth: when the debrid endpoint is flapping (connection errors / timeouts), stop
+        // issuing calls for a cooldown instead of having every request independently retry-and-time-out,
+        // which maximizes thread/socket pressure. Placed outside the timeout (so it counts timeouts) and
+        // inside the retry (so retries feed the failure window). Deliberately does NOT handle 429 — those
+        // are normal rate-limit backoff handled proactively by AddRateLimitHeaders / RateLimitHandler.
+        builder.AddCircuitBreaker(new CircuitBreakerStrategyOptions<HttpResponseMessage>
+        {
+            ShouldHandle = args => args.Outcome switch
+            {
+                { Exception: HttpRequestException } => PredicateResult.True(),
+                { Exception: TimeoutRejectedException } => PredicateResult.True(),
+                { Result.StatusCode: HttpStatusCode.RequestTimeout } => PredicateResult.True(),
+                _ => PredicateResult.False()
+            },
+            FailureRatio = 0.5,
+            MinimumThroughput = 10,
+            SamplingDuration = TimeSpan.FromSeconds(30),
+            BreakDuration = TimeSpan.FromSeconds(30)
         });
 
         builder.AddTimeout(new TimeoutStrategyOptions

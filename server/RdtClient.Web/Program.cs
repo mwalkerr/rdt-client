@@ -5,6 +5,7 @@ using Microsoft.Extensions.Hosting.WindowsServices;
 using RdtClient.Data.Data;
 using RdtClient.Data.Models.Internal;
 using RdtClient.Service;
+using RdtClient.Service.BackgroundServices;
 using RdtClient.Service.Helpers;
 using RdtClient.Service.Middleware;
 using RdtClient.Service.Services;
@@ -112,7 +113,12 @@ builder.Services.ConfigureApplicationCookie(options =>
 
 builder.Services.Configure<HostOptions>(hostOptions =>
 {
-    hostOptions.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
+    // An unhandled exception escaping a BackgroundService.ExecuteAsync stops the host so the
+    // process exits and the container (restart: unless-stopped) restarts — instead of leaving a
+    // half-dead "zombie" app whose web host keeps answering while the worker is dead.
+    // Companion safeguard: hosted-service loops catch transient/expected errors internally so
+    // routine hiccups don't escape here and cause a restart loop.
+    hostOptions.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.StopHost;
 });
 
 // Configure development cors.
@@ -192,6 +198,16 @@ try
     app.MapHub<RdtHub>("/hub");
 
     app.MapControllers();
+
+    // Worker-aware health probe (unauthenticated). Returns 503 when the background worker's heartbeat
+    // is stale so a zombied worker shows up as "unhealthy" in `docker ps` and to the external watchdog.
+    // Recovery itself is handled by WorkerHeartbeatMonitor (self-exit); Docker doesn't restart on
+    // unhealthy. The plain SPA root (/) is always up in the zombie state, so it can't be used here.
+    app.MapGet("/health",
+               () => TaskRunner.IsHeartbeatStale
+                   ? Results.Json(new { status = "unhealthy", lastTick = TaskRunner.LastTick }, statusCode: StatusCodes.Status503ServiceUnavailable)
+                   : Results.Json(new { status = "healthy", lastTick = TaskRunner.LastTick }))
+       .AllowAnonymous();
 
     app.UseWhen(x => !x.Request.Path.StartsWithSegments("/api"),
                 routeBuilder =>
