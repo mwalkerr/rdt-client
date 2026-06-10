@@ -344,10 +344,12 @@ public class TorrentRunner(
             {
                 Log($"Retrying torrent {torrent.RetryCount}/{torrent.TorrentRetryAttempts}", torrent);
 
-                if (torrent.RetryCount > torrent.TorrentRetryAttempts)
+                if (torrent.RetryCount >= torrent.TorrentRetryAttempts)
                 {
+                    var errorMsg = $"All torrent retries exhausted ({torrent.RetryCount}/{torrent.TorrentRetryAttempts})";
+                    Log(errorMsg);
                     await torrents.UpdateRetry(torrent.TorrentId, null, torrent.RetryCount);
-                    Log($"Torrent reach max retry count");
+                    await torrents.UpdateComplete(torrent.TorrentId, errorMsg, DateTimeOffset.UtcNow, false);
 
                     continue;
                 }
