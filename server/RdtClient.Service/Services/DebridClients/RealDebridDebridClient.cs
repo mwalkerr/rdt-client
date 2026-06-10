@@ -23,7 +23,7 @@ public class RealDebridDebridClient(ILogger<RealDebridDebridClient> logger, IHtt
 
         while (true)
         {
-            var pagedResults = await GetClient().Torrents.GetAsync(offset, 5000);
+            var pagedResults = await (await GetClientAsync()).Torrents.GetAsync(offset, 5000);
 
             results.AddRange(pagedResults);
 
@@ -40,7 +40,7 @@ public class RealDebridDebridClient(ILogger<RealDebridDebridClient> logger, IHtt
 
     public async Task<DebridClientUser> GetUser()
     {
-        var user = await GetClient().User.GetAsync();
+        var user = await (await GetClientAsync()).User.GetAsync();
 
         return new()
         {
@@ -55,7 +55,7 @@ public class RealDebridDebridClient(ILogger<RealDebridDebridClient> logger, IHtt
         {
             var timeoutCancellationToken = new CancellationTokenSource(TimeSpan.FromSeconds(Settings.Get.Provider.Timeout));
 
-            var result = await GetClient().Torrents.AddMagnetAsync(magnetLink, timeoutCancellationToken.Token);
+            var result = await (await GetClientAsync()).Torrents.AddMagnetAsync(magnetLink, timeoutCancellationToken.Token);
 
             return result.Id;
         }
@@ -76,7 +76,7 @@ public class RealDebridDebridClient(ILogger<RealDebridDebridClient> logger, IHtt
         {
             var timeoutCancellationToken = new CancellationTokenSource(TimeSpan.FromSeconds(Settings.Get.Provider.Timeout));
 
-            var result = await GetClient().Torrents.AddFileAsync(bytes, timeoutCancellationToken.Token);
+            var result = await (await GetClientAsync()).Torrents.AddFileAsync(bytes, timeoutCancellationToken.Token);
 
             return result.Id;
         }
@@ -135,19 +135,19 @@ public class RealDebridDebridClient(ILogger<RealDebridDebridClient> logger, IHtt
             return 0;
         }
 
-        await GetClient().Torrents.SelectFilesAsync(torrent.RdId!, [.. fileIds]);
+        await (await GetClientAsync()).Torrents.SelectFilesAsync(torrent.RdId!, [.. fileIds]);
 
         return fileIds.Length;
     }
 
     public async Task Delete(Data.Models.Data.Torrent torrent)
     {
-        await GetClient().Torrents.DeleteAsync(torrent.RdId!);
+        await (await GetClientAsync()).Torrents.DeleteAsync(torrent.RdId!);
     }
 
     public async Task<String> Unrestrict(Data.Models.Data.Torrent torrent, String link)
     {
-        var result = await GetClient().Unrestrict.LinkAsync(link);
+        var result = await (await GetClientAsync()).Unrestrict.LinkAsync(link);
 
         if (result.Download == null)
         {
@@ -318,7 +318,7 @@ public class RealDebridDebridClient(ILogger<RealDebridDebridClient> logger, IHtt
         return Task.FromResult(HttpUtility.UrlDecode(uri.Segments.Last()));
     }
 
-    private RdNetClient GetClient()
+    private async Task<RdNetClient> GetClientAsync()
     {
         try
         {
@@ -335,10 +335,12 @@ public class RealDebridDebridClient(ILogger<RealDebridDebridClient> logger, IHtt
             var rdtNetClient = new RdNetClient(null, httpClient, 5, Settings.Get.Provider.ApiHostname);
             rdtNetClient.UseApiAuthentication(apiKey);
 
-            // Get the server time to fix up the timezones on results
+            // Get the server time to fix up the timezones on results.
+            // NOTE: must stay awaited — a blocking .Result here pinned threadpool threads under RD
+            // slowdowns and starved the pool, wedging the background worker (zombie-worker incident).
             if (_offset == null)
             {
-                var serverTime = rdtNetClient.Api.GetIsoTimeAsync().Result;
+                var serverTime = await rdtNetClient.Api.GetIsoTimeAsync();
                 _offset = serverTime.Offset;
             }
 
@@ -409,7 +411,7 @@ public class RealDebridDebridClient(ILogger<RealDebridDebridClient> logger, IHtt
 
     private async Task<DebridClientTorrent> GetInfo(String torrentId)
     {
-        var result = await GetClient().Torrents.GetInfoAsync(torrentId);
+        var result = await (await GetClientAsync()).Torrents.GetInfoAsync(torrentId);
 
         return Map(result);
     }
