@@ -11,7 +11,12 @@ using Torrent = RdtClient.Data.Models.Data.Torrent;
 
 namespace RdtClient.Service.Services.DebridClients;
 
-public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientFactory httpClientFactory, IDownloadableFileFilter fileFilter, IRateLimitCoordinator coordinator)
+public class TorBoxDebridClient(
+    ILogger<TorBoxDebridClient> logger,
+    IHttpClientFactory httpClientFactory,
+    IDownloadableFileFilter fileFilter,
+    IRateLimitCoordinator coordinator,
+    ISettings settings)
     : IDebridClient
 {
     private const String TorBoxApiHost = "api.torbox.app";
@@ -69,9 +74,14 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
         return await HandleAddTorrentErrors(async asQueued =>
         {
             var user = await GetClient().User.GetAsync(true);
-            var result = await GetClient(DiConfig.TORBOX_CLIENT_SLOW).Torrents.AddMagnetAsync(magnetLink, user.Data?.Settings?.SeedTorrents ?? 3, as_queued: asQueued);
 
-            return result.Data!.Hash!;
+            var result = await GetClient(DiConfig.TORBOX_CLIENT_SLOW)
+                               .Torrents.AddMagnetAsync(magnetLink,
+                                                        user.Data?.Settings?.SeedTorrents ?? 3,
+                                                        allowZip: Settings.Get.Provider.PreferZippedDownloads,
+                                                        as_queued: asQueued);
+
+            return result.Data?.TorrentId?.ToString() ?? throw new InvalidOperationException("TorBox API did not return torrent ID.");
         });
     }
 
@@ -80,9 +90,14 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
         return await HandleAddTorrentErrors(async asQueued =>
         {
             var user = await GetClient().User.GetAsync(true);
-            var result = await GetClient(DiConfig.TORBOX_CLIENT_SLOW).Torrents.AddFileAsync(bytes, user.Data?.Settings?.SeedTorrents ?? 3, as_queued: asQueued);
 
-            return result.Data!.Hash!;
+            var result = await GetClient(DiConfig.TORBOX_CLIENT_SLOW)
+                               .Torrents.AddFileAsync(bytes,
+                                                      user.Data?.Settings?.SeedTorrents ?? 3,
+                                                      allowZip: Settings.Get.Provider.PreferZippedDownloads,
+                                                      as_queued: asQueued);
+
+            return result.Data?.TorrentId?.ToString() ?? throw new InvalidOperationException("TorBox API did not return torrent ID");
         });
     }
 
@@ -156,7 +171,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
             }
             else
             {
-                await GetClient().Torrents.ControlAsync(torrent.RdId, "delete");
+                await GetClient().Torrents.ControlByIdAsync(Int32.Parse(torrent.RdId), "delete");
             }
         });
     }
@@ -316,8 +331,12 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
         }
         else
         {
-            var torrentId = await HandleErrors(() => GetClient().Torrents.GetHashInfoAsync(torrent.Hash, true));
-            id = torrentId?.Id;
+            if (torrent.RdId == null)
+            {
+                return null;
+            }
+
+            id = Int32.Parse(torrent.RdId);
         }
 
         if (id == null)
@@ -327,7 +346,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
 
         var downloadableFiles = torrent.Files.Where(file => fileFilter.IsDownloadable(torrent, file.Path, file.Bytes)).ToList();
 
-        if (downloadableFiles.Count == torrent.Files.Count && torrent.DownloadClient != Data.Enums.DownloadClient.Symlink && Settings.Get.Provider.PreferZippedDownloads)
+        if (downloadableFiles.Count == torrent.Files.Count && torrent.DownloadClient != Data.Enums.DownloadClient.Symlink && settings.Current.Provider.PreferZippedDownloads)
         {
             logger.LogDebug("Downloading files from TorBox as a zip.");
 
@@ -364,7 +383,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
     {
         try
         {
-            var apiKey = Settings.Get.Provider.ApiKey;
+            var apiKey = settings.Current.Provider.ApiKey;
 
             if (String.IsNullOrWhiteSpace(apiKey))
             {
@@ -372,7 +391,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
             }
 
             var httpClient = httpClientFactory.CreateClient(clientId);
-            var torBoxNetClient = new TorBoxNetClient(null, httpClient);
+            var torBoxNetClient = new TorBoxNetClient(null, httpClient, retryCount: 5);
             torBoxNetClient.UseApiAuthentication(apiKey);
 
             // Get the server time to fix up the timezones on results
@@ -441,7 +460,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
     {
         return new()
         {
-            Id = torrent.Hash,
+            Id = torrent.Id.ToString(),
             Filename = torrent.Name,
             OriginalFilename = torrent.Name,
             Hash = torrent.Hash,
@@ -513,7 +532,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
         {
             throw rateLimitException;
         }
-        catch (TorBoxException ex) when ("active_limit".Equals(ex.Error, StringComparison.OrdinalIgnoreCase))
+        catch (TorBoxException ex) when (IsRateLimit(ex))
         {
             coordinator.UpdateCooldown(TorBoxApiHost, TimeSpan.FromMinutes(2));
 
@@ -541,7 +560,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
         {
             throw rateLimitException;
         }
-        catch (TorBoxException ex) when ("active_limit".Equals(ex.Error, StringComparison.OrdinalIgnoreCase))
+        catch (TorBoxException ex) when (IsRateLimit(ex))
         {
             coordinator.UpdateCooldown(TorBoxApiHost, TimeSpan.FromMinutes(2));
 
@@ -558,6 +577,12 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
     private async Task<String> HandleAddTorrentErrors(Func<Boolean, Task<String>> action)
     {
         return await HandleErrors(() => action(false));
+    }
+
+    private static Boolean IsRateLimit(TorBoxException exception)
+    {
+        return exception.Error.Equals("RATE_LIMIT", StringComparison.OrdinalIgnoreCase)
+               || exception.Error.Equals("ACTIVE_LIMIT", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<String> HandleAddUsenetErrors(Func<Boolean, Task<String>> action)
@@ -590,7 +615,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
             }
             else
             {
-                var result = await GetClient().Torrents.GetHashInfoAsync(id, true);
+                var result = await GetClient().Torrents.GetIdInfoAsync(Int32.Parse(id), true);
 
                 if (result != null)
                 {

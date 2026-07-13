@@ -96,5 +96,6 @@ COPY --from=node-build-env /appclient/root/ /
 # ports and volumes
 EXPOSE 6500
 
-# Check Status
-HEALTHCHECK --interval=30s --timeout=30s --start-period=30s --retries=3 CMD curl --fail http://localhost:6500 || exit 
+# Check Status — hit the worker-aware /health endpoint (returns 503 when the background worker's
+# heartbeat is stale). The SPA root (/) stays up even when the worker is zombied, so it's useless here.
+HEALTHCHECK --interval=30s --timeout=30s --start-period=30s --retries=3 CMD curl --fail http://localhost:6500/health || exit 1

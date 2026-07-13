@@ -13,6 +13,12 @@ public class SabnzbdHistorySlot
     [JsonPropertyName("size")]
     public String Size { get; set; } = "0 B";
 
+    [JsonPropertyName("bytes")]
+    public Int64 Bytes { get; set; }
+
+    [JsonPropertyName("downloaded")]
+    public Int64 Downloaded { get; set; }
+
     [JsonPropertyName("status")]
     public String Status { get; set; } = "Completed";
 

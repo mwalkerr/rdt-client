@@ -6,6 +6,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased
 
+## [2.0.140] - 2026-07-08
+### Added
+- Added env variable SKIP_CHOWN to prevent setting ownership permissions on startup to /app and /data.
+
+### Changed
+- Store torrent payloads (torrent files) in a separate table to prevent them being downloaded on each page view.
+- Fixed refreshing the download path when a download fails.
+- Fixed SABnzbd file size reporting.
+- Fixed AutoDeleting only deleting when a torrent is finished, preventing it from being removed too quickly.
+
+## [2.0.139] - 2026-06-24
+### Added
+- Add IP binding for the Bezzad downloader.
+### Changed
+- Check file sizes when downloading as a workaround to Torbox download glitch.
+- Download Station improvements.
+- Changed SQLite DB locking to improve DB performance.
+
+## [2.0.138] - 2026-06-05
+### Fixed
+- SABnzbd fixes.
+
+## [2.0.137] - 2026-06-05
+### Fixed
+- Fix torbox save path mapping for single file downloads.
+
+## [2.0.136] - 2026-05-30
+### Added
+- Added devcontainer development workflow.
+
+### Changed
+- Upgraded torbox.net dependency.
+
+## [2.0.135] - 2026-05-27
+### Changed
+- When adding a torrent through the qBittorrent endpoints, it will wait to see if the torrent gets added properly or errors out, resulting in a better experience for infringing files and Sonarr / Radarr.
+- Upgraded torbox.net dependency. 
+- Support SABnzbd API key auth, thanks to @ALenfant!
+
+## [2.0.134] - 2026-05-22
+### Changed
+- Upgraded torbox.net dependency. 
+
+## [2.0.133] - 2026-05-17
+### Added
+- Added NZB support for Premiumize, thanks to @ALenfant!
+
+## [2.0.132] - 2026-05-17
+### Changed
+- Fixed for Cleanuparr
+- Upgrade Torbox.NET dependency
+
+## [2.0.131] - 2026-05-14
+### Changed
+- Fixes to the rate limiting.
+
 ## [2.0.130] - 2026-04-28
 ### Changed
 - Fixes to unit tests

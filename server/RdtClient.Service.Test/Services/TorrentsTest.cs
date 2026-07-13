@@ -96,7 +96,7 @@ public class TorrentsTest
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            Settings.Get.DownloadClient.DownloadPath = settings.DownloadClient.DownloadPath = @"C:\Downloads";
+            settings.DownloadClient.DownloadPath = @"C:\Downloads";
         }
 
         var downloadPath = Path.Combine(settings.DownloadClient.DownloadPath, category);
@@ -120,7 +120,9 @@ public class TorrentsTest
                                            null!,
                                            null!,
                                            null!,
-                                           null!);
+                                           null!,
+                                           new TestSettings(),
+                                           new TorrentRunnerState());
 
         mocks.ProcessMock.Setup(p => p.WaitForExit(It.IsAny<Int32>())).Returns(true);
 
@@ -165,9 +167,9 @@ public class TorrentsTest
         mocks.TorrentDataMock.Setup(t => t.GetById(torrent.TorrentId)).Returns(Task.FromResult<Torrent?>(torrent));
         mocks.DownloadsMock.Setup(d => d.GetForTorrent(torrent.TorrentId)).ReturnsAsync(downloads);
 
-        var downloadPath = $"{settings.DownloadClient.DownloadPath}/{torrent.Category}";
-        var torrentPath = $"{downloadPath}/{torrent.RdName}";
-        var filePath = $"{torrentPath}/{downloads[0].FileName}";
+        var downloadPath = Path.Combine(settings.DownloadClient.DownloadPath, torrent.Category ?? "");
+        var torrentPath = Path.Combine(downloadPath, torrent.RdName ?? "");
+        var filePath = Path.Combine(torrentPath, downloads[0].FileName ?? "");
 
         var fileSystemMock = new MockFileSystem(new Dictionary<String, MockFileData>
         {
@@ -186,7 +188,9 @@ public class TorrentsTest
                                            null!,
                                            null!,
                                            null!,
-                                           null!);
+                                           null!,
+                                           new TestSettings(),
+                                           new TorrentRunnerState());
 
         //Act
         await torrents.RunTorrentComplete(torrent.TorrentId, settings);
@@ -213,9 +217,9 @@ public class TorrentsTest
         mocks.TorrentDataMock.Setup(t => t.GetById(torrent.TorrentId)).Returns(Task.FromResult<Torrent?>(torrent));
         mocks.DownloadsMock.Setup(d => d.GetForTorrent(torrent.TorrentId)).ReturnsAsync(downloads);
 
-        var downloadPath = $"{settings.DownloadClient.DownloadPath}/{torrent.Category}";
-        var torrentPath = $"{downloadPath}/{torrent.RdName}";
-        var filePath = $"{torrentPath}/{downloads[0].FileName}";
+        var downloadPath = Path.Combine(settings.DownloadClient.DownloadPath, torrent.Category ?? "");
+        var torrentPath = Path.Combine(downloadPath, torrent.RdName ?? "");
+        var filePath = Path.Combine(torrentPath, downloads[0].FileName ?? "");
 
         var fileSystemMock = new MockFileSystem(new Dictionary<String, MockFileData>
         {
@@ -234,7 +238,9 @@ public class TorrentsTest
                                            null!,
                                            null!,
                                            null!,
-                                           null!);
+                                           null!,
+                                           new TestSettings(),
+                                           new TorrentRunnerState());
 
         mocks.ProcessMock.Setup(p => p.WaitForExit(It.IsAny<Int32>()))
              .Callback(() =>
@@ -280,9 +286,9 @@ public class TorrentsTest
         mocks.TorrentDataMock.Setup(t => t.GetById(torrent.TorrentId)).Returns(Task.FromResult<Torrent?>(torrent));
         mocks.DownloadsMock.Setup(d => d.GetForTorrent(torrent.TorrentId)).ReturnsAsync(downloads);
 
-        var downloadPath = $"{settings.DownloadClient.DownloadPath}/{torrent.Category}";
-        var torrentPath = $"{downloadPath}/{torrent.RdName}";
-        var filePath = $"{torrentPath}/{downloads[0].FileName}";
+        var downloadPath = Path.Combine(settings.DownloadClient.DownloadPath, torrent.Category ?? "");
+        var torrentPath = Path.Combine(downloadPath, torrent.RdName ?? "");
+        var filePath = Path.Combine(torrentPath, downloads[0].FileName ?? "");
 
         var fileSystemMock = new MockFileSystem(new Dictionary<String, MockFileData>
         {
@@ -301,7 +307,9 @@ public class TorrentsTest
                                            null!,
                                            null!,
                                            null!,
-                                           null!);
+                                           null!,
+                                           new TestSettings(),
+                                           new TorrentRunnerState());
 
         mocks.ProcessMock.Setup(p => p.WaitForExit(It.IsAny<Int32>()))
              .Callback(() =>
@@ -364,7 +372,9 @@ public class TorrentsTest
                                            null!,
                                            null!,
                                            null!,
-                                           null!);
+                                           null!,
+                                           new TestSettings(),
+                                           new TorrentRunnerState());
 
         // Act
         await torrents.AddNzbFileToDebridQueue(bytes, "filename.nzb", torrent);
@@ -412,7 +422,9 @@ public class TorrentsTest
                                            null!,
                                            null!,
                                            null!,
-                                           null!);
+                                           null!,
+                                           new TestSettings(),
+                                           new TorrentRunnerState());
 
         // Act
         await torrents.AddNzbLinkToDebridQueue(link, torrent);
@@ -426,5 +438,91 @@ public class TorrentsTest
                                                 It.IsAny<DownloadClient>(),
                                                 It.IsAny<Torrent>()),
                                      Times.Once);
+    }
+
+    [Fact]
+    public async Task RetryTorrent_ShouldRequeueUsingStoredPayload()
+    {
+        var mocks = new Mocks();
+        var magnetLink = "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&dn=RetryTorrent";
+
+        var originalTorrent = new Torrent
+        {
+            TorrentId = Guid.NewGuid(),
+            Hash = "legacy-hash",
+            Type = DownloadType.Torrent,
+            IsFile = false,
+            Retry = DateTimeOffset.UtcNow,
+            Payload = new()
+            {
+                Content = magnetLink
+            },
+            Downloads = [],
+            DownloadClient = DownloadClient.Bezzad
+        };
+
+        var requeuedTorrent = new Torrent
+        {
+            TorrentId = Guid.NewGuid()
+        };
+
+        mocks.TorrentDataMock.Setup(t => t.GetById(originalTorrent.TorrentId))
+             .ReturnsAsync(originalTorrent);
+
+        mocks.TorrentDataMock.Setup(t => t.UpdateComplete(It.IsAny<Guid>(),
+                                                          It.IsAny<String?>(),
+                                                          It.IsAny<DateTimeOffset?>(),
+                                                          It.IsAny<Boolean>()))
+             .Returns(Task.CompletedTask);
+
+        mocks.TorrentDataMock.Setup(t => t.UpdateRetry(It.IsAny<Guid>(),
+                                                       It.IsAny<DateTimeOffset?>(),
+                                                       It.IsAny<Int32>()))
+             .Returns(Task.CompletedTask);
+
+        mocks.TorrentDataMock.Setup(t => t.Delete(originalTorrent.TorrentId))
+             .Returns(Task.CompletedTask);
+
+        mocks.TorrentDataMock.Setup(t => t.GetByHash(It.IsAny<String>()))
+             .ReturnsAsync((Torrent?)null);
+
+        mocks.TorrentDataMock.Setup(t => t.Add(null,
+                                               It.IsAny<String>(),
+                                               magnetLink,
+                                               false,
+                                               DownloadType.Torrent,
+                                               originalTorrent.DownloadClient,
+                                               It.IsAny<Torrent>()))
+             .ReturnsAsync(requeuedTorrent);
+
+        mocks.EnricherMock.Setup(e => e.EnrichMagnetLink(magnetLink))
+             .ReturnsAsync(magnetLink);
+
+        var torrents = new TorrentsService(mocks.TorrentsLoggerMock.Object,
+                                           mocks.TorrentDataMock.Object,
+                                           mocks.DownloadsMock.Object,
+                                           mocks.ProcessFactoryMock.Object,
+                                           new MockFileSystem(),
+                                           mocks.EnricherMock.Object,
+                                           null!,
+                                           null!,
+                                           null!,
+                                           null!,
+                                           null!,
+                                           new TestSettings(),
+                                           new TorrentRunnerState());
+
+        await torrents.RetryTorrent(originalTorrent.TorrentId, 3);
+
+        mocks.TorrentDataMock.Verify(t => t.Add(null,
+                                                It.IsAny<String>(),
+                                                magnetLink,
+                                                false,
+                                                DownloadType.Torrent,
+                                                originalTorrent.DownloadClient,
+                                                It.IsAny<Torrent>()),
+                                     Times.Once);
+
+        mocks.TorrentDataMock.Verify(t => t.UpdateRetry(requeuedTorrent.TorrentId, null, 3), Times.Once);
     }
 }

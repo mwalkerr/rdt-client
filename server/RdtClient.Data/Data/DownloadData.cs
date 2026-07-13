@@ -74,6 +74,7 @@ public class DownloadData(DataContext dataContext, ILogger<DownloadData>? logger
 
             return DownloadAddResult.Added;
         }
+
         // These shouldn't be possible any longer, but added for safety and until confirmed.
         catch (DbUpdateException ex)
         {
@@ -88,7 +89,9 @@ public class DownloadData(DataContext dataContext, ILogger<DownloadData>? logger
 
             if (IsForeignKeyViolation(ex) && !await dataContext.Torrents.AsNoTracking().AnyAsync(m => m.TorrentId == torrentId))
             {
-                logger?.LogDebug("Skipped download creation after the torrent was deleted concurrently. TorrentId: {torrentId}, Path: {path}", torrentId, downloadInfo.RestrictedLink);
+                logger?.LogDebug("Skipped download creation after the torrent was deleted concurrently. TorrentId: {torrentId}, Path: {path}",
+                                 torrentId,
+                                 downloadInfo.RestrictedLink);
 
                 return DownloadAddResult.TorrentMissing;
             }
@@ -123,6 +126,21 @@ public class DownloadData(DataContext dataContext, ILogger<DownloadData>? logger
         }
 
         dbDownload.FileName = fileName;
+
+        await dataContext.SaveChangesAsync();
+    }
+
+    public async Task UpdatePath(Guid downloadId, String path)
+    {
+        var dbDownload = await dataContext.Downloads
+                                          .FirstOrDefaultAsync(m => m.DownloadId == downloadId);
+
+        if (dbDownload == null)
+        {
+            return;
+        }
+
+        dbDownload.Path = path;
 
         await dataContext.SaveChangesAsync();
     }
@@ -273,7 +291,22 @@ public class DownloadData(DataContext dataContext, ILogger<DownloadData>? logger
         await dataContext.SaveChangesAsync();
     }
 
-    public async Task Reset(Guid downloadId)
+    public async Task UpdateDownloadQueued(Guid downloadId, DateTimeOffset? dateTime)
+    {
+        var dbDownload = await dataContext.Downloads
+                                          .FirstOrDefaultAsync(m => m.DownloadId == downloadId);
+
+        if (dbDownload == null)
+        {
+            return;
+        }
+
+        dbDownload.DownloadQueued = dateTime;
+
+        await dataContext.SaveChangesAsync();
+    }
+
+    public async Task Reset(Guid downloadId, DateTimeOffset? downloadQueued = null)
     {
         var dbDownload = await dataContext.Downloads
                                           .FirstOrDefaultAsync(m => m.DownloadId == downloadId)
@@ -282,7 +315,7 @@ public class DownloadData(DataContext dataContext, ILogger<DownloadData>? logger
         dbDownload.RetryCount = 0;
         dbDownload.Link = null;
         dbDownload.Added = DateTimeOffset.UtcNow;
-        dbDownload.DownloadQueued = DateTimeOffset.UtcNow;
+        dbDownload.DownloadQueued = downloadQueued ?? DateTimeOffset.UtcNow;
         dbDownload.DownloadStarted = null;
         dbDownload.DownloadFinished = null;
         dbDownload.UnpackingQueued = null;

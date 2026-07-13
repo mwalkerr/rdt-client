@@ -3,7 +3,7 @@
 This is a web interface to manage your torrents on Real-Debrid, AllDebrid, Premiumize, TorBox or DebridLink. It supports the following features:
 
 - Add new torrents through magnets or files
-- Add usenet downloads through NZB files (TorBox only)
+- Add usenet downloads through NZB files (TorBox and Premiumize only)
 - Download all files from Real-Debrid, AllDebrid, Premiumize or TorBox to your local machine automatically
 - Unpack all files when finished downloading
 - Implements a fake qBittorrent API so you can hook up other applications like Sonarr, Radarr or Couchpotato.
@@ -122,6 +122,8 @@ It has the following options:
 - Parallel connections per download: This number indicates how many parallel it will use per download. This can increase speed, recommended is no more than 8.
 - Parallel chunks per download: This number indicates in how many chunks each download is split, recommended is no more than 8.
 - Connection Timeout: This number indicates the timeout in milliseconds before a download chunk times out. It will retry each chunk 5 times before completely failing.
+- Bind to specific IP: When enabled, the downloader binds outbound connections to the configured local IP address. Useful on hosts with multiple network interfaces.
+- Bind IP address: The local IP address to bind to. Must be an IP assigned to an active network adapter on this host.
 
 #### Aria2c downloader
 
@@ -150,14 +152,24 @@ Suggested configuration:
 
 #### Synology Download Station
 
-The Synology Download Station downloader uses an external Download Station server. You will need to set this up yourself.
+The Synology Download Station downloader hands each file to your NAS's Download Station, which downloads it and writes it to disk. The bytes never pass through rdt-client, so its memory stays flat regardless of file size.
+
+Prerequisites on the Synology:
+
+- Install and start the **Download Station** package.
+- Use a DSM account that has **both Download Station and File Station permission** (File Station is required so rdt-client can create the per-download destination folder). Disable 2-step verification on this account (the API login is username/password only), or use a dedicated service account.
+- Download Station's **Default destination** needs to be set for the new user. Rdt-client sets this account's default destination for you if it doesn't already have one, so you normally don't need to do anything. If that automatic set fails, sign into Download Station *as that account* and set it under **Settings → BT/HTTP/FTP/NZB → Location → Default destination** — otherwise every task that account creates stays stuck in **"Waiting"** (DSM logs `Failed to get default download destination of user [<account>]`).
 
 It has the following options:
 
-- Url: The URL to the Synology DownloadStation. A common URL is `http://127.0.0.1:5000`
+- Url: The URL to the Synology DownloadStation. A common URL is `http://127.0.0.1:5000`. From inside a Docker container `127.0.0.1` is the container itself — use the NAS's LAN IP (e.g. `http://192.168.1.50:5000`) and the DSM web port (HTTP `5000` by default).
 - Username: The username to use when connecting to the Synology DownloadStation.
 - Password: The password to use when connecting to the Synology DownloadStation.
-- Download Path: The root path to download the file on the Synology DownloadStation host. If left empty, the default path configured on your Download Station server will be used.
+- Download Path: The destination on the Synology, **relative to a shared folder** (e.g. `Media/Downloads/Torrents`) — **not** an absolute path like `/volume1/Media/Downloads/Torrents`. **This must resolve to the exact same physical folder as the general Download path** — see Path mapping below. If left empty, the default Download Station destination is used.
+
+**Path mapping (important).** Download Station runs on the NAS; rdt-client runs in its container. They see the same folder through different mounts, so:
+
+> **The Synology *Download Path* (above) and rdt-client's general *Download path* must resolve to the exact same physical folder on the NAS.**
 
 ### Troubleshooting
 
@@ -166,7 +178,9 @@ It has the following options:
 
 ### Connecting Sonarr/Radarr
 
-RdtClient emulates the qBittorrent web protocol and allow applications to use those APIs. This way you can use Sonarr and Radarr to download directly from RealDebrid.
+RdtClient emulates the qBittorrent web protocol and allows applications to use those APIs. This way you can use Sonarr and Radarr to download directly from RealDebrid.
+
+#### Torrents
 
 1. Login to Sonarr or Radarr and click `Settings`.
 1. Go to the `Download Client` tab and click the plus to add.
@@ -183,6 +197,24 @@ When downloading files it will append the `category` setting in the Sonarr/Radar
 
 Notice: the progress and ETA reported in Sonarr's Activity tab will not be accurate, but it will report the torrent as completed so it can be processed after it is done downloading.
 
+#### Usenet/NZB
+
+RdtClient also emulates part of the SABnzbd API so Sonarr and Radarr can add NZB downloads. This requires a provider that supports Usenet/NZB downloads, currently TorBox or Premiumize.
+
+1. Login to Sonarr or Radarr and click `Settings`.
+1. Go to the `Download Client` tab and click the plus to add.
+1. Click `SABnzbd` in the list.
+1. Enter the IP or hostname of RdtClient in the `Host` field.
+1. Enter `6500` in the `Port` field.
+1. Enable `Use SSL` only if you access RdtClient through HTTPS.
+1. Leave `URL Base` empty unless RdtClient is configured with a `BasePath`, for example `/rdt`.
+1. If RdtClient authentication is enabled, leave `API Key` empty and enter your RdtClient username and password. If your client only supports an API key, enter `{username}:{password}` in `API Key`.
+1. If RdtClient authentication is disabled, enter any value in `API Key`, for example `rdtclient`, and leave username/password empty.
+1. Set the category to `sonarr` for Sonarr or `radarr` for Radarr.
+1. Hit `Test` and then `Save` if all is well.
+
+When importing completed NZB downloads, Sonarr/Radarr must be able to access the path reported by RdtClient. In Docker setups this may require a Remote Path Mapping from the RdtClient download path to the path mounted inside Sonarr/Radarr.
+
 ### Running within a folder
 
 By default the application runs in the root of your hosted address (i.e. https://rdt.myserver.com/), but if you want to run it as a relative folder (i.e. https://myserver.com/rdt) you will have to change the `BasePath` setting in the `appsettings.json` file. You can set the `BASE_PATH` environment variable for docker enviroments.
@@ -197,6 +229,17 @@ By default the application runs in the root of your hosted address (i.e. https:/
 - .NET 10
 - Visual Studio 2025
 - (optional) Resharper
+
+### Dev Container
+
+The repository includes a dev container under `.devcontainer/` for the split development workflow used by this project.
+
+It installs .NET 10 and Node 22, forwards ports `4200` and `6500`, and persists `/data/db` and `/data/downloads` in named volumes so the local SQLite database, logs, and downloads survive container rebuilds.
+
+1. Open the repository in the dev container.
+1. In one terminal run `dotnet watch run --project server/RdtClient.Web`.
+1. In another terminal run `cd client && npm start`.
+1. Open `http://localhost:4200`. The Angular dev server proxies `/Api` and `/hub` to the backend running on `6500`.
 
 1. Open the client folder project in VS Code and run `npm install`.
 1. To debug run `ng serve`, to build run `ng build -c production`.

@@ -324,9 +324,6 @@ namespace RdtClient.Data.Migrations
                     b.Property<string>("ExcludeRegex")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("FileOrMagnet")
-                        .HasColumnType("TEXT");
-
                     b.Property<DateTimeOffset?>("FilesSelected")
                         .HasColumnType("TEXT");
 
@@ -411,6 +408,20 @@ namespace RdtClient.Data.Migrations
                     b.ToTable("Torrents");
                 });
 
+            modelBuilder.Entity("RdtClient.Data.Models.Data.TorrentPayload", b =>
+                {
+                    b.Property<Guid>("TorrentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("TorrentId");
+
+                    b.ToTable("TorrentPayloads");
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
                 {
                     b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole", null)
@@ -473,9 +484,21 @@ namespace RdtClient.Data.Migrations
                     b.Navigation("Torrent");
                 });
 
+            modelBuilder.Entity("RdtClient.Data.Models.Data.TorrentPayload", b =>
+                {
+                    b.HasOne("RdtClient.Data.Models.Data.Torrent", "Torrent")
+                        .WithOne("Payload")
+                        .HasForeignKey("RdtClient.Data.Models.Data.TorrentPayload", "TorrentId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("Torrent");
+                });
+
             modelBuilder.Entity("RdtClient.Data.Models.Data.Torrent", b =>
                 {
                     b.Navigation("Downloads");
+                    b.Navigation("Payload");
                 });
 #pragma warning restore 612, 618
         }

@@ -5,7 +5,7 @@ using RdtClient.Data.Models.QBittorrent;
 
 namespace RdtClient.Service.Services;
 
-public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authentication authentication, Torrents torrents, Downloads downloads)
+public class QBittorrent(ILogger<QBittorrent> logger, ISettings settings, Authentication authentication, Torrents torrents, Downloads downloads, ITorrentRunnerState runnerState)
 {
     public async Task<Boolean> AuthLogin(String userName, String password)
     {
@@ -168,7 +168,7 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
             WebUiUsername = ""
         };
 
-        var savePath = Settings.AppDefaultSavePath;
+        var savePath = settings.DefaultSavePath;
 
         preferences.SavePath = savePath;
         preferences.TempPath = $"{savePath}temp{Path.DirectorySeparatorChar}";
@@ -185,7 +185,7 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
 
     public virtual async Task<IList<TorrentInfo>> TorrentInfo()
     {
-        var savePath = Settings.AppDefaultSavePath;
+        var savePath = settings.DefaultSavePath;
 
         var results = new List<TorrentInfo>();
 
@@ -214,7 +214,17 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
                 }
                 else
                 {
-                    torrentPath = Path.Combine(downloadPath, torrent.RdName) + Path.DirectorySeparatorChar;
+                    var existingContentPath = GetExistingContentPath(downloadPath, torrent);
+
+                    if (!String.IsNullOrWhiteSpace(existingContentPath))
+                    {
+                        torrentPath = existingContentPath;
+                    }
+                    else
+                    {
+                        var contentPathName = GetContentPathName(torrent);
+                        torrentPath = Path.Combine(downloadPath, contentPathName) + Path.DirectorySeparatorChar;
+                    }
                 }
             }
 
@@ -328,6 +338,162 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
         return results;
     }
 
+    private static String GetContentPathName(Torrent torrent)
+    {
+        if (String.IsNullOrWhiteSpace(torrent.RdName))
+        {
+            return torrent.RdName ?? String.Empty;
+        }
+
+        var topLevelSelectedFiles = torrent.Files
+                                           .Where(m => m.Selected && !String.IsNullOrWhiteSpace(m.Path))
+                                           .Select(m => m.Path.Trim('/').Trim('\\'))
+                                           .Where(m => m.IndexOfAny(['/', '\\']) < 0)
+                                           .Select(Path.GetFileName)
+                                           .Where(m => !String.IsNullOrWhiteSpace(m))
+                                           .Distinct(StringComparer.OrdinalIgnoreCase)
+                                           .ToList();
+
+        if (topLevelSelectedFiles.Count == 1)
+        {
+            var selectedFileName = topLevelSelectedFiles[0]!;
+            var selectedFileBaseName = Path.GetFileNameWithoutExtension(selectedFileName);
+
+            if (torrent.ClientKind == Provider.TorBox)
+            {
+                return selectedFileBaseName;
+            }
+
+            if (!String.IsNullOrWhiteSpace(selectedFileBaseName) &&
+                selectedFileBaseName.Equals(torrent.RdName, StringComparison.OrdinalIgnoreCase))
+            {
+                return selectedFileName;
+            }
+        }
+
+        return torrent.RdName;
+    }
+
+    private static String? GetExistingContentPath(String downloadPath, Torrent torrent)
+    {
+        if (!torrent.Completed.HasValue || !Directory.Exists(downloadPath))
+        {
+            return null;
+        }
+
+        var selectedFilePaths = torrent.Files
+                                       .Where(m => m.Selected && !String.IsNullOrWhiteSpace(m.Path))
+                                       .Select(m => NormalizeRelativePath(m.Path!))
+                                       .Where(m => !String.IsNullOrWhiteSpace(m))
+                                       .Distinct(StringComparer.OrdinalIgnoreCase)
+                                       .ToList();
+
+        var downloadFileNames = torrent.Downloads
+                                       .Select(m => m.FileName)
+                                       .Where(m => !String.IsNullOrWhiteSpace(m))
+                                       .Select(m => Path.GetFileName(m!))
+                                       .Where(m => !String.IsNullOrWhiteSpace(m))
+                                       .Distinct(StringComparer.OrdinalIgnoreCase)
+                                       .ToList();
+
+        if (selectedFilePaths.Count == 0 && downloadFileNames.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var candidateRoot in GetCandidateContentRoots(downloadPath, torrent, selectedFilePaths, downloadFileNames))
+        {
+            if (IsMatchingContentRoot(candidateRoot, selectedFilePaths, downloadFileNames))
+            {
+                return candidateRoot + Path.DirectorySeparatorChar;
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<String> GetCandidateContentRoots(String downloadPath,
+                                                                Torrent torrent,
+                                                                IEnumerable<String> selectedFilePaths,
+                                                                IEnumerable<String> downloadFileNames)
+    {
+        var yielded = new HashSet<String>(StringComparer.OrdinalIgnoreCase);
+
+        void AddCandidate(ICollection<String> candidates, String? name)
+        {
+            if (!String.IsNullOrWhiteSpace(name))
+            {
+                candidates.Add(Path.Combine(downloadPath, name));
+            }
+        }
+
+        var directCandidates = new List<String>();
+
+        AddCandidate(directCandidates, torrent.RdName);
+
+        foreach (var fileName in downloadFileNames)
+        {
+            AddCandidate(directCandidates, fileName);
+        }
+
+        foreach (var selectedFilePath in selectedFilePaths)
+        {
+            AddCandidate(directCandidates, Path.GetFileName(selectedFilePath));
+            AddCandidate(directCandidates, GetFirstPathComponent(selectedFilePath));
+        }
+
+        foreach (var candidate in directCandidates)
+        {
+            if (Directory.Exists(candidate) && yielded.Add(candidate))
+            {
+                yield return candidate;
+            }
+        }
+
+        foreach (var directory in Directory.EnumerateDirectories(downloadPath))
+        {
+            if (yielded.Add(directory))
+            {
+                yield return directory;
+            }
+        }
+    }
+
+    private static Boolean IsMatchingContentRoot(String candidateRoot,
+                                                 IEnumerable<String> selectedFilePaths,
+                                                 IEnumerable<String> downloadFileNames)
+    {
+        foreach (var selectedFilePath in selectedFilePaths)
+        {
+            if (File.Exists(Path.Combine(candidateRoot, selectedFilePath)))
+            {
+                return true;
+            }
+        }
+
+        foreach (var fileName in downloadFileNames)
+        {
+            if (File.Exists(Path.Combine(candidateRoot, fileName)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static String NormalizeRelativePath(String path)
+    {
+        return path.Trim('/').Trim('\\').Replace('\\', Path.DirectorySeparatorChar);
+    }
+
+    private static String GetFirstPathComponent(String path)
+    {
+        var separatorIndex = path.IndexOfAny(['/', '\\']);
+
+        return separatorIndex < 0 ? path : path[..separatorIndex];
+    }
+
     public async Task<IList<TorrentFileItem>?> TorrentFileContents(String hash)
     {
         var torrent = await torrents.GetByHash(hash);
@@ -340,21 +506,21 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
         var progress = torrent.Completed.HasValue || torrent.RdStatus == TorrentStatus.Finished ? 1f : 0f;
 
         return torrent.Files
-            .Select((file, index) => new TorrentFileItem
-            {
-                Index = index,
-                Name = file.Path,
-                Size = file.Bytes,
-                Progress = file.Selected ? progress : 0f,
-                Priority = file.Selected ? 1 : 0,
-                IsSeed = false
-            })
-            .ToList();
+                      .Select((file, index) => new TorrentFileItem
+                      {
+                          Index = index,
+                          Name = file.Path,
+                          Size = file.Bytes,
+                          Progress = file.Selected ? progress : 0f,
+                          Priority = file.Selected ? 1 : 0,
+                          IsSeed = false
+                      })
+                      .ToList();
     }
 
     public async Task<TorrentProperties?> TorrentProperties(String hash)
     {
-        var savePath = Settings.AppDefaultSavePath;
+        var savePath = settings.DefaultSavePath;
 
         var torrent = await torrents.GetByHash(hash);
 
@@ -444,7 +610,7 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
             return;
         }
 
-        switch (Settings.Get.Integrations.Default.FinishedAction)
+        switch (settings.Current.Integrations.Default.FinishedAction)
         {
             case TorrentFinishedAction.RemoveAllTorrents:
                 logger.LogDebug("Removing torrents from debrid provider and RDT-Client, no files");
@@ -472,54 +638,54 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
         }
     }
 
-    public async Task TorrentsAddMagnet(String magnetLink, String? category, Int32? priority)
+    public async Task<Torrent> TorrentsAddMagnet(String magnetLink, String? category, Int32? priority)
     {
         logger.LogDebug($"Add magnet {category}");
 
         var torrent = new Torrent
         {
             Category = category,
-            DownloadClient = Settings.Get.DownloadClient.Client,
-            HostDownloadAction = Settings.Get.Integrations.Default.HostDownloadAction,
-            FinishedActionDelay = Settings.Get.Integrations.Default.FinishedActionDelay,
-            DownloadAction = Settings.Get.Integrations.Default.OnlyDownloadAvailableFiles ? TorrentDownloadAction.DownloadAvailableFiles : TorrentDownloadAction.DownloadAll,
+            DownloadClient = settings.Current.DownloadClient.Client,
+            HostDownloadAction = settings.Current.Integrations.Default.HostDownloadAction,
+            FinishedActionDelay = settings.Current.Integrations.Default.FinishedActionDelay,
+            DownloadAction = settings.Current.Integrations.Default.OnlyDownloadAvailableFiles ? TorrentDownloadAction.DownloadAvailableFiles : TorrentDownloadAction.DownloadAll,
             FinishedAction = TorrentFinishedAction.None,
-            DownloadMinSize = Settings.Get.Integrations.Default.MinFileSize,
-            IncludeRegex = Settings.Get.Integrations.Default.IncludeRegex,
-            ExcludeRegex = Settings.Get.Integrations.Default.ExcludeRegex,
-            TorrentRetryAttempts = Settings.Get.Integrations.Default.TorrentRetryAttempts,
-            DownloadRetryAttempts = Settings.Get.Integrations.Default.DownloadRetryAttempts,
-            DeleteOnError = Settings.Get.Integrations.Default.DeleteOnError,
-            Lifetime = Settings.Get.Integrations.Default.TorrentLifetime,
-            Priority = priority ?? (Settings.Get.Integrations.Default.Priority > 0 ? Settings.Get.Integrations.Default.Priority : null)
+            DownloadMinSize = settings.Current.Integrations.Default.MinFileSize,
+            IncludeRegex = settings.Current.Integrations.Default.IncludeRegex,
+            ExcludeRegex = settings.Current.Integrations.Default.ExcludeRegex,
+            TorrentRetryAttempts = settings.Current.Integrations.Default.TorrentRetryAttempts,
+            DownloadRetryAttempts = settings.Current.Integrations.Default.DownloadRetryAttempts,
+            DeleteOnError = settings.Current.Integrations.Default.DeleteOnError,
+            Lifetime = settings.Current.Integrations.Default.TorrentLifetime,
+            Priority = priority ?? (settings.Current.Integrations.Default.Priority > 0 ? settings.Current.Integrations.Default.Priority : null)
         };
 
-        await torrents.AddMagnetToDebridQueue(magnetLink, torrent);
+        return await torrents.AddMagnetToDebridQueue(magnetLink, torrent);
     }
 
-    public async Task TorrentsAddFile(Byte[] fileBytes, String? category, Int32? priority)
+    public async Task<Torrent> TorrentsAddFile(Byte[] fileBytes, String? category, Int32? priority)
     {
         logger.LogDebug($"Add file {category}");
 
         var torrent = new Torrent
         {
             Category = category,
-            DownloadClient = Settings.Get.DownloadClient.Client,
-            HostDownloadAction = Settings.Get.Integrations.Default.HostDownloadAction,
-            FinishedActionDelay = Settings.Get.Integrations.Default.FinishedActionDelay,
-            DownloadAction = Settings.Get.Integrations.Default.OnlyDownloadAvailableFiles ? TorrentDownloadAction.DownloadAvailableFiles : TorrentDownloadAction.DownloadAll,
+            DownloadClient = settings.Current.DownloadClient.Client,
+            HostDownloadAction = settings.Current.Integrations.Default.HostDownloadAction,
+            FinishedActionDelay = settings.Current.Integrations.Default.FinishedActionDelay,
+            DownloadAction = settings.Current.Integrations.Default.OnlyDownloadAvailableFiles ? TorrentDownloadAction.DownloadAvailableFiles : TorrentDownloadAction.DownloadAll,
             FinishedAction = TorrentFinishedAction.None,
-            DownloadMinSize = Settings.Get.Integrations.Default.MinFileSize,
-            IncludeRegex = Settings.Get.Integrations.Default.IncludeRegex,
-            ExcludeRegex = Settings.Get.Integrations.Default.ExcludeRegex,
-            TorrentRetryAttempts = Settings.Get.Integrations.Default.TorrentRetryAttempts,
-            DownloadRetryAttempts = Settings.Get.Integrations.Default.DownloadRetryAttempts,
-            DeleteOnError = Settings.Get.Integrations.Default.DeleteOnError,
-            Lifetime = Settings.Get.Integrations.Default.TorrentLifetime,
-            Priority = priority ?? (Settings.Get.Integrations.Default.Priority > 0 ? Settings.Get.Integrations.Default.Priority : null)
+            DownloadMinSize = settings.Current.Integrations.Default.MinFileSize,
+            IncludeRegex = settings.Current.Integrations.Default.IncludeRegex,
+            ExcludeRegex = settings.Current.Integrations.Default.ExcludeRegex,
+            TorrentRetryAttempts = settings.Current.Integrations.Default.TorrentRetryAttempts,
+            DownloadRetryAttempts = settings.Current.Integrations.Default.DownloadRetryAttempts,
+            DeleteOnError = settings.Current.Integrations.Default.DeleteOnError,
+            Lifetime = settings.Current.Integrations.Default.TorrentLifetime,
+            Priority = priority ?? (settings.Current.Integrations.Default.Priority > 0 ? settings.Current.Integrations.Default.Priority : null)
         };
 
-        await torrents.AddFileToDebridQueue(fileBytes, torrent);
+        return await torrents.AddFileToDebridQueue(fileBytes, torrent);
     }
 
     public async Task TorrentsSetCategory(String hash, String? category)
@@ -535,7 +701,7 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
                                          .Select(m => m.Category!.ToLower())
                                          .ToList();
 
-        var categoryList = (Settings.Get.General.Categories ?? "")
+        var categoryList = (settings.Current.General.Categories ?? "")
                            .Split(",", StringSplitOptions.RemoveEmptyEntries)
                            .Distinct(StringComparer.CurrentCultureIgnoreCase)
                            .Select(m => m.Trim())
@@ -552,7 +718,7 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
                                                    m => new TorrentCategory
                                                    {
                                                        Name = m,
-                                                       SavePath = Path.Combine(Settings.AppDefaultSavePath, m)
+                                                       SavePath = Path.Combine(settings.DefaultSavePath, m)
                                                    });
         }
 
@@ -568,7 +734,7 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
 
         category = category.Trim();
 
-        var categoriesSetting = Settings.Get.General.Categories;
+        var categoriesSetting = settings.Current.General.Categories;
 
         var categoryList = (categoriesSetting ?? "")
                            .Split(",", StringSplitOptions.RemoveEmptyEntries)
@@ -595,7 +761,7 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
 
         category = category.Trim();
 
-        var categoriesSetting = Settings.Get.General.Categories;
+        var categoriesSetting = settings.Current.General.Categories;
 
         var categoryList = (categoriesSetting ?? "")
                            .Split(",", StringSplitOptions.RemoveEmptyEntries)
@@ -635,7 +801,7 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
 
         foreach (var download in downloadsForTorrent)
         {
-            if (TorrentRunner.ActiveDownloadClients.TryGetValue(download.DownloadId, out var downloadClient))
+            if (runnerState.ActiveDownloadClients.TryGetValue(download.DownloadId, out var downloadClient))
             {
                 await downloadClient.Pause();
             }
@@ -655,7 +821,7 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
 
         foreach (var download in downloadsForTorrent)
         {
-            if (TorrentRunner.ActiveDownloadClients.TryGetValue(download.DownloadId, out var downloadClient))
+            if (runnerState.ActiveDownloadClients.TryGetValue(download.DownloadId, out var downloadClient))
             {
                 await downloadClient.Resume();
             }
@@ -668,7 +834,7 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
 
         var categories = await TorrentsCategories();
 
-        var activeDownloads = TorrentRunner.ActiveDownloadClients.Sum(m => m.Value.Speed);
+        var activeDownloads = runnerState.ActiveDownloadClients.Sum(m => m.Value.Speed);
 
         return new()
         {
@@ -686,16 +852,16 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
         };
     }
 
-    public static TransferInfo TransferInfo()
+    public virtual TransferInfo TransferInfo()
     {
-        var activeDownloads = TorrentRunner.ActiveDownloadClients.Sum(m => m.Value.Speed);
+        var activeDownloads = runnerState.ActiveDownloadClients.Sum(m => m.Value.Speed);
 
         return new()
         {
             ConnectionStatus = "connected",
             DlInfoData = DownloadClient.GetTotalBytesDownloadedThisSession(),
             DlInfoSpeed = activeDownloads,
-            DlRateLimit = Settings.Get.DownloadClient.MaxSpeed
+            DlRateLimit = settings.Current.DownloadClient.MaxSpeed
         };
     }
 

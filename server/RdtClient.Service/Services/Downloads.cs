@@ -31,6 +31,11 @@ public class Downloads(DownloadData downloadData) : IDownloads
         await downloadData.UpdateUnrestrictedLink(downloadId, unrestrictedLink);
     }
 
+    public async Task UpdatePath(Guid downloadId, String path)
+    {
+        await downloadData.UpdatePath(downloadId, path);
+    }
+
     public async Task UpdateFileName(Guid downloadId, String fileName)
     {
         await downloadData.UpdateFileName(downloadId, fileName);
@@ -76,6 +81,11 @@ public class Downloads(DownloadData downloadData) : IDownloads
         await downloadData.UpdateRetryCount(downloadId, retryCount);
     }
 
+    public async Task UpdateDownloadQueued(Guid downloadId, DateTimeOffset? dateTime)
+    {
+        await downloadData.UpdateDownloadQueued(downloadId, dateTime);
+    }
+
     public async Task UpdateRemoteId(Guid downloadId, String remoteId)
     {
         await downloadData.UpdateRemoteId(downloadId, remoteId);
@@ -86,8 +96,8 @@ public class Downloads(DownloadData downloadData) : IDownloads
         await downloadData.DeleteForTorrent(torrentId);
     }
 
-    public async Task Reset(Guid downloadId)
+    public async Task Reset(Guid downloadId, DateTimeOffset? downloadQueued = null)
     {
-        await downloadData.Reset(downloadId);
+        await downloadData.Reset(downloadId, downloadQueued);
     }
 }

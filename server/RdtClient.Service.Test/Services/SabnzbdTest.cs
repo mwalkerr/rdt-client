@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Logging;
 using Moq;
-using RdtClient.Data.Data;
 using RdtClient.Data.Enums;
 using RdtClient.Data.Models.Data;
 using RdtClient.Data.Models.Internal;
@@ -16,11 +15,13 @@ public class SabnzbdTest
     };
 
     private readonly Mock<ILogger<Sabnzbd>> _loggerMock = new();
+    private readonly TestSettings _settings;
     private readonly Mock<Torrents> _torrentsMock;
 
     public SabnzbdTest()
     {
-        _torrentsMock = new(null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+        _settings = new();
+        _torrentsMock = new(null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, _settings, new TorrentRunnerState());
         _torrentsMock.Setup(t => t.Get()).ReturnsAsync(new List<Torrent>());
     }
 
@@ -50,7 +51,7 @@ public class SabnzbdTest
         _torrentsMock.Setup(t => t.Get()).ReturnsAsync(torrentList);
         _torrentsMock.Setup(t => t.GetDownloadStats(It.IsAny<Guid>())).Returns((0, 1000, 500));
 
-        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings);
+        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings, _settings);
 
         // Act
         var result = await sabnzbd.GetQueue();
@@ -90,7 +91,7 @@ public class SabnzbdTest
 
         _torrentsMock.Setup(t => t.Get()).ReturnsAsync(torrentList);
 
-        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings);
+        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings, _settings);
 
         // Act
         var result = await sabnzbd.GetQueue();
@@ -134,7 +135,7 @@ public class SabnzbdTest
 
         _torrentsMock.Setup(t => t.Get()).ReturnsAsync(torrentList);
 
-        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings);
+        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings, _settings);
 
         // Act
         var result = await sabnzbd.GetQueue();
@@ -186,7 +187,7 @@ public class SabnzbdTest
 
         _torrentsMock.Setup(t => t.Get()).ReturnsAsync(torrentList);
 
-        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings);
+        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings, _settings);
 
         // Act
         var result = await sabnzbd.GetQueue();
@@ -224,7 +225,7 @@ public class SabnzbdTest
 
         _torrentsMock.Setup(t => t.Get()).ReturnsAsync(torrentList);
 
-        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings);
+        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings, _settings);
 
         // Act
         var result = await sabnzbd.GetQueue();
@@ -260,7 +261,7 @@ public class SabnzbdTest
 
         _torrentsMock.Setup(t => t.Get()).ReturnsAsync(torrentList);
 
-        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings);
+        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings, _settings);
 
         // Act
         var result = await sabnzbd.GetHistory();
@@ -275,7 +276,7 @@ public class SabnzbdTest
     {
         // Arrange
         var savePath = @"C:\Downloads";
-        SettingData.Get.DownloadClient.MappedPath = savePath;
+        _settings.Current.DownloadClient.MappedPath = savePath;
 
         var torrentList = new List<Torrent>
         {
@@ -292,7 +293,7 @@ public class SabnzbdTest
 
         _torrentsMock.Setup(t => t.Get()).ReturnsAsync(torrentList);
 
-        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings);
+        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings, _settings);
 
         // Act
         var result = await sabnzbd.GetHistory();
@@ -308,7 +309,7 @@ public class SabnzbdTest
     {
         // Arrange
         var savePath = @"C:\Downloads";
-        SettingData.Get.DownloadClient.MappedPath = savePath;
+        _settings.Current.DownloadClient.MappedPath = savePath;
 
         var torrentList = new List<Torrent>
         {
@@ -325,7 +326,7 @@ public class SabnzbdTest
 
         _torrentsMock.Setup(t => t.Get()).ReturnsAsync(torrentList);
 
-        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings);
+        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings, _settings);
 
         // Act
         var result = await sabnzbd.GetHistory();
@@ -355,7 +356,7 @@ public class SabnzbdTest
 
         _torrentsMock.Setup(t => t.Get()).ReturnsAsync(torrentList);
 
-        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings);
+        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings, _settings);
 
         // Act
         var result = await sabnzbd.GetHistory();
@@ -365,11 +366,68 @@ public class SabnzbdTest
         Assert.Equal("Failed", result.Slots[0].Status);
     }
 
+    [Theory]
+    [InlineData(TorrentFinishedAction.RemoveAllTorrents, true, true, true, true)]
+    [InlineData(TorrentFinishedAction.RemoveAllTorrents, false, true, true, false)]
+    [InlineData(TorrentFinishedAction.RemoveRealDebrid, true, false, true, true)]
+    [InlineData(TorrentFinishedAction.RemoveRealDebrid, false, false, true, false)]
+    [InlineData(TorrentFinishedAction.RemoveClient, true, true, false, true)]
+    [InlineData(TorrentFinishedAction.RemoveClient, false, true, false, false)]
+    public async Task Delete_ShouldRespectFinishedActionAndDeleteFiles(TorrentFinishedAction finishedAction,
+                                                                       Boolean deleteFiles,
+                                                                       Boolean expectedDeleteData,
+                                                                       Boolean expectedDeleteRdTorrent,
+                                                                       Boolean expectedDeleteLocalFiles)
+    {
+        // Arrange
+        var torrentId = Guid.NewGuid();
+        _settings.Current.Integrations.Default.FinishedAction = finishedAction;
+
+        _torrentsMock.Setup(t => t.GetByHash("hash1"))
+                     .ReturnsAsync(new Torrent
+                     {
+                         TorrentId = torrentId,
+                         Hash = "hash1",
+                         Type = DownloadType.Nzb
+                     });
+
+        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings, _settings);
+
+        // Act
+        await sabnzbd.Delete("hash1", deleteFiles);
+
+        // Assert
+        _torrentsMock.Verify(t => t.Delete(torrentId, expectedDeleteData, expectedDeleteRdTorrent, expectedDeleteLocalFiles), Times.Once);
+    }
+
+    [Fact]
+    public async Task Delete_ShouldNotDelete_WhenFinishedActionIsNone()
+    {
+        // Arrange
+        _settings.Current.Integrations.Default.FinishedAction = TorrentFinishedAction.None;
+
+        _torrentsMock.Setup(t => t.GetByHash("hash1"))
+                     .ReturnsAsync(new Torrent
+                     {
+                         TorrentId = Guid.NewGuid(),
+                         Hash = "hash1",
+                         Type = DownloadType.Nzb
+                     });
+
+        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings, _settings);
+
+        // Act
+        await sabnzbd.Delete("hash1", true);
+
+        // Assert
+        _torrentsMock.Verify(t => t.Delete(It.IsAny<Guid>(), It.IsAny<Boolean>(), It.IsAny<Boolean>(), It.IsAny<Boolean>()), Times.Never);
+    }
+
     [Fact]
     public void GetConfig_ShouldReturnCorrectConfig()
     {
         // Arrange
-        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings);
+        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings, _settings);
 
         // Act
         var result = sabnzbd.GetConfig();
@@ -399,9 +457,9 @@ public class SabnzbdTest
 
         _torrentsMock.Setup(t => t.Get()).ReturnsAsync(torrentList);
 
-        SettingData.Get.General.Categories = "TV, Music, *";
+        _settings.Current.General.Categories = "TV, Music, *";
 
-        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings);
+        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings, _settings);
 
         // Act
         var result = sabnzbd.GetCategories();

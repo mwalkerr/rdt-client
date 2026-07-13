@@ -7,7 +7,7 @@ using RdtClient.Service.Services;
 
 namespace RdtClient.Service.BackgroundServices;
 
-public class ProviderUpdater(ILogger<ProviderUpdater> logger, IServiceProvider serviceProvider) : BackgroundService
+public class ProviderUpdater(ILogger<ProviderUpdater> logger, IServiceProvider serviceProvider, ISettings settings) : BackgroundService
 {
     private static DateTime _nextUpdate = DateTime.UtcNow;
 
@@ -30,11 +30,11 @@ public class ProviderUpdater(ILogger<ProviderUpdater> logger, IServiceProvider s
             {
                 var torrents = await torrentService.Get();
 
-                if (_nextUpdate < DateTime.UtcNow && (Settings.Get.Provider.AutoImport || torrents.Any(t => t.RdStatus != TorrentStatus.Finished) || RdtHub.HasConnections))
+                if (_nextUpdate < DateTime.UtcNow && (settings.Current.Provider.AutoImport || torrents.Any(t => t.RdStatus != TorrentStatus.Finished) || RdtHub.HasConnections))
                 {
                     logger.LogDebug($"Updating torrent info from debrid provider");
 
-                    var updateTime = Settings.Get.Provider.CheckInterval * 3;
+                    var updateTime = settings.Current.Provider.CheckInterval * 3;
 
                     if (updateTime < 30)
                     {
@@ -43,7 +43,7 @@ public class ProviderUpdater(ILogger<ProviderUpdater> logger, IServiceProvider s
 
                     if (RdtHub.HasConnections)
                     {
-                        updateTime = Settings.Get.Provider.CheckInterval;
+                        updateTime = settings.Current.Provider.CheckInterval;
 
                         if (updateTime < 5)
                         {
@@ -63,6 +63,12 @@ public class ProviderUpdater(ILogger<ProviderUpdater> logger, IServiceProvider s
                 await torrentRunner.SetRateLimit(ex.RetryAfter, ex.Message);
                 _nextUpdate = DateTime.UtcNow.Add(ex.RetryAfter);
             }
+            catch (Exception ex) when (UnwrapRateLimitException(ex) is { } rle)
+            {
+                logger.LogWarning("Rate limit detected (wrapped in {exType}): {message}", ex.GetType().Name, rle.Message);
+                await torrentRunner.SetRateLimit(rle.RetryAfter, rle.Message);
+                _nextUpdate = DateTime.UtcNow.Add(rle.RetryAfter);
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Unexpected error occurred in ProviderUpdater: {ex.Message}", ex.Message);
@@ -72,5 +78,26 @@ public class ProviderUpdater(ILogger<ProviderUpdater> logger, IServiceProvider s
         }
 
         logger.LogInformation("ProviderUpdater stopped.");
+    }
+
+    private static RateLimitException? UnwrapRateLimitException(Exception ex)
+    {
+        if (ex is AggregateException ae)
+        {
+            foreach (var inner in ae.Flatten().InnerExceptions)
+            {
+                if (inner is RateLimitException rle)
+                {
+                    return rle;
+                }
+            }
+        }
+
+        if (ex.InnerException is RateLimitException innerRle)
+        {
+            return innerRle;
+        }
+
+        return null;
     }
 }

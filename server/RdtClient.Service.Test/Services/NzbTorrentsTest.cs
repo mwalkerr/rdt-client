@@ -3,6 +3,7 @@ using System.Text;
 using Moq;
 using RdtClient.Data.Enums;
 using RdtClient.Data.Models.Data;
+using TorrentRunnerState = RdtClient.Service.Services.TorrentRunnerState;
 using TorrentsService = RdtClient.Service.Services.Torrents;
 
 namespace RdtClient.Service.Test.Services;
@@ -28,7 +29,9 @@ public class NzbTorrentsTest
                         null!,
                         null!,
                         null!,
-                        null!);
+                        null!,
+                        new TestSettings(),
+                        new TorrentRunnerState());
     }
 
     [Fact]

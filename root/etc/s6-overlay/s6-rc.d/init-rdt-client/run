@@ -8,6 +8,10 @@
 	rm -rf /data/rtdclient.pid
 
 # permissions
-echo "Setting permissions"
-chown -R abc:abc \
-	/app /data
+if [ -z "${SKIP_CHOWN}" ] || [ "${SKIP_CHOWN}" = "false" ]; then
+	echo "Setting permissions"
+	chown -R abc:abc \
+		/app /data
+else
+	echo "Skipping permissions (SKIP_CHOWN is set)"
+fi

@@ -19,6 +19,12 @@ public class SabnzbdQueue
     [JsonPropertyName("sizeleft")]
     public String SizeLeft { get; set; } = "0 B";
 
+    [JsonPropertyName("mb")]
+    public String Mb { get; set; } = "0.00";
+
+    [JsonPropertyName("mbleft")]
+    public String MbLeft { get; set; } = "0.00";
+
     [JsonPropertyName("noofslots")]
     public Int32 NoOfSlots { get; set; }
 
